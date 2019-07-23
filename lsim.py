@@ -405,6 +405,7 @@ def monodepth_model_fn(features, labels, mode, params):
         return tf.estimator.EstimatorSpec(
             mode=monodepth_mode, predictions=predictions)
 
+
 def main():
     # args = parse_args()
     config = EIGEN_CONFIG
@@ -430,7 +431,7 @@ def main():
     for epoch in range(current_epoch, total_epochs):
         print("########### Starting epoch {} ###############".format(epoch))
         if epoch == 0 and \
-            not os.path.exists(os.path.join(config['model_dir'], 'checkpoint')):
+                not os.path.exists(os.path.join(config['model_dir'], 'checkpoint')):
             ws = config['warm_start']
         else:
             ws = None
@@ -440,13 +441,16 @@ def main():
             warm_start_from=ws,
             params=config['model_params'])
 
-        est.train(input_fn=lambda: train_input_fn(config['train_filename'],
-            config['base_path'], config['dataset']))
+        est.train(input_fn=lambda: train_input_fn(
+            config['train_filename'],
+            config['base_path'],
+            config['dataset']))
 
         disparities_left = []
-        for item in est.predict(input_fn=lambda:
-                test_input_fn(config['test_filename'],
-                    config['base_path'], config['dataset'])):
+        for item in est.predict(input_fn=lambda: test_input_fn(
+                config['test_filename'],
+                config['base_path'],
+                config['dataset'])):
             disparities_left.append(item['left_disp_est'].squeeze())
 
         disparities_left = np.stack(disparities_left)
