@@ -1,10 +1,7 @@
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
 import numpy as np
 from monodepth.utils.evaluate_kitti import evaluate_kitti
-from monodepth.bilinear_sampler import bilinear_sampler_1d_h
 from monodepth.monodepth_model_siamese import MonodepthModel, monodepth_parameters
-import argparse
 import os
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -111,12 +108,21 @@ def _parse_function(line, base_path, dataset, mode):
 
     if mode == tf.estimator.ModeKeys.TRAIN:
         do_flip = tf.random_uniform([], 0, 1)
-        img_left = tf.cond(do_flip > 0.5, lambda: tf.image.flip_left_right(img_right_temp), lambda: img_left_temp)
-        img_right = tf.cond(do_flip > 0.5, lambda: tf.image.flip_left_right(img_left_temp),  lambda: img_right_temp)
+        img_left = tf.cond(
+            do_flip > 0.5,
+            lambda: tf.image.flip_left_right(img_right_temp),
+            lambda: img_left_temp)
+        img_right = tf.cond(
+            do_flip > 0.5,
+            lambda: tf.image.flip_left_right(img_left_temp),
+            lambda: img_right_temp)
 
         # randomly augment images
         do_augment = tf.random_uniform([], 0, 1)
-        img_left, img_right = tf.cond(do_augment > 0.5, lambda: augment_image_pair(img_left, img_right), lambda: (img_left, img_right))
+        img_left, img_right = tf.cond(
+            do_augment > 0.5,
+            lambda: augment_image_pair(img_left, img_right),
+            lambda: (img_left, img_right))
 
     else:
         img_left = img_left_temp
@@ -152,206 +158,6 @@ def test_input_fn(filename, base_path, dataset):
     iterator = dataset.make_one_shot_iterator()
     next_element = iterator.get_next()
     return next_element, None
-
-
-def scale_pyramid(img, num_scales):
-    scaled_imgs = [img]
-    s = tf.shape(img)
-    h = s[1]
-    w = s[2]
-    for i in range(num_scales - 1):
-        ratio = 2 ** (i + 1)
-        nh = h // ratio
-        nw = w // ratio
-        scaled_imgs.append(tf.image.resize_area(img, [nh, nw]))
-    return scaled_imgs
-
-
-def generate_image_left(img, disp):
-    return bilinear_sampler_1d_h(img, -disp)
-
-
-def generate_image_right(img, disp):
-    return bilinear_sampler_1d_h(img, disp)
-
-
-def gradient_x(img):
-    gx = img[:, :, :-1, :] - img[:, :, 1:, :]
-    return gx
-
-
-def gradient_y(img):
-    gy = img[:, :-1, :, :] - img[:, 1:, :, :]
-    return gy
-
-
-def get_disparity_smoothness(disp, pyramid):
-    disp_gradients_x = [gradient_x(d) for d in disp]
-    disp_gradients_y = [gradient_y(d) for d in disp]
-
-    image_gradients_x = [gradient_x(img) for img in pyramid]
-    image_gradients_y = [gradient_y(img) for img in pyramid]
-
-    weights_x = [tf.exp(-tf.reduce_mean(tf.abs(g), 3, keep_dims=True))
-                 for g in image_gradients_x]
-    weights_y = [tf.exp(-tf.reduce_mean(tf.abs(g), 3, keep_dims=True))
-                 for g in image_gradients_y]
-
-    smoothness_x = [disp_gradients_x[i] * weights_x[i] for i in range(4)]
-    smoothness_y = [disp_gradients_y[i] * weights_y[i] for i in range(4)]
-    return smoothness_x + smoothness_y
-
-
-def SSIM(x, y):
-    C1 = 0.01 ** 2
-    C2 = 0.03 ** 2
-
-    mu_x = slim.avg_pool2d(x, 3, 1, 'VALID')
-    mu_y = slim.avg_pool2d(y, 3, 1, 'VALID')
-
-    sigma_x = slim.avg_pool2d(x ** 2, 3, 1, 'VALID') - mu_x ** 2
-    sigma_y = slim.avg_pool2d(y ** 2, 3, 1, 'VALID') - mu_y ** 2
-    sigma_xy = slim.avg_pool2d(x * y, 3, 1, 'VALID') - mu_x * mu_y
-
-    SSIM_n = (2 * mu_x * mu_y + C1) * (2 * sigma_xy + C2)
-    SSIM_d = (mu_x ** 2 + mu_y ** 2 + C1) * (sigma_x + sigma_y + C2)
-
-    SSIM = SSIM_n / SSIM_d
-
-    return tf.clip_by_value((1 - SSIM) / 2, 0, 1)
-
-
-def encoder_layer(inputs, filters, kernel_size, activation):
-    initializer = tf.contrib.layers.xavier_initializer()
-    conv_a = tf.layers.conv2d(
-        inputs=inputs,
-        filters=filters,
-        kernel_size=kernel_size,
-        padding="same",
-        strides=1,
-        activation=activation,
-        kernel_initializer=initializer)
-    conv_b = tf.layers.conv2d(
-        inputs=conv_a,
-        filters=filters,
-        kernel_size=kernel_size,
-        padding="same",
-        strides=2,
-        activation=activation,
-        kernel_initializer=initializer)
-    return conv_b
-
-
-def decoder_layer(inputs, filters, kernel_size, activation, skip, prev):
-    initializer = tf.contrib.layers.xavier_initializer()
-    upsample = tf.layers.conv2d_transpose(
-        inputs=inputs,
-        filters=filters,
-        kernel_size=kernel_size,
-        strides=2,
-        padding="same",
-        kernel_initializer=initializer)
-
-    if prev is not None:
-        upsample_prev = tf.layers.conv2d_transpose(
-            inputs=prev,
-            filters=filters,
-            kernel_size=kernel_size,
-            strides=2,
-            padding="same",
-            kernel_initializer=initializer)
-
-    if skip is not None and prev is not None:
-        concat = tf.concat([upsample, skip, upsample_prev], 3)
-    elif skip is None and prev is not None:
-        concat = tf.concat([upsample, upsample_prev], 3)
-    elif skip is not None and prev is None:
-        concat = tf.concat([upsample, skip], 3)
-    else:
-        concat = upsample
-
-    out = tf.layers.conv2d(
-        inputs=concat,
-        filters=filters,
-        kernel_size=kernel_size,
-        padding="same",
-        strides=1,
-        activation=activation,
-        kernel_initializer=initializer)
-
-    return out
-
-
-def get_disp(x):
-    initializer = tf.contrib.layers.xavier_initializer()
-    out = tf.layers.conv2d(
-        inputs=x,
-        filters=1,
-        kernel_size=3,
-        padding="same",
-        strides=1,
-        activation=tf.nn.sigmoid,
-        kernel_initializer=initializer)
-    out = 0.3*out
-    return out
-
-
-def build_net(inputs):
-    with tf.variable_scope('encoder_decoder'):
-        layers = {'input_layer': inputs}
-
-        encoder_spec = [
-            {'name': 'enc1', 'filters': 32, 'kernel_size': 7,
-             'input': 'input_layer'},
-            {'name': 'enc2', 'filters': 64, 'kernel_size': 5, 'input': 'enc1'},
-            {'name': 'enc3', 'filters': 128, 'kernel_size': 3, 'input': 'enc2'},
-            {'name': 'enc4', 'filters': 256, 'kernel_size': 3, 'input': 'enc3'},
-            {'name': 'enc5', 'filters': 512, 'kernel_size': 3, 'input': 'enc4'},
-            {'name': 'enc6', 'filters': 512, 'kernel_size': 3, 'input': 'enc5'},
-            {'name': 'enc7', 'filters': 512, 'kernel_size': 3, 'input': 'enc6'},
-        ]
-
-        for l_spec in encoder_spec:
-            with tf.variable_scope(l_spec['name']):
-                layers[l_spec['name']] = encoder_layer(
-                    inputs=layers[l_spec['input']],
-                    filters=l_spec['filters'],
-                    kernel_size=l_spec['kernel_size'],
-                    activation=tf.nn.elu)
-
-        decoder_spec = [
-            {'name': 'dec7', 'filters': 512, 'kernel_size': 3,
-             'input': 'enc7', 'skip': 'enc6', 'prev': None},
-            {'name': 'dec6', 'filters': 512, 'kernel_size': 3,
-             'input': 'dec7', 'skip': 'enc5', 'prev': None},
-            {'name': 'dec5', 'filters': 256, 'kernel_size': 3,
-             'input': 'dec6', 'skip': 'enc4', 'prev': None},
-            {'name': 'dec4', 'filters': 128, 'kernel_size': 3,
-             'input': 'dec5', 'skip': 'enc3', 'prev': None},
-            {'name': 'dec3', 'filters': 64, 'kernel_size': 3,
-             'input': 'dec4', 'skip': 'enc2', 'prev': 'disp4'},
-            {'name': 'dec2', 'filters': 32, 'kernel_size': 3,
-             'input': 'dec3', 'skip': 'enc1', 'prev': 'disp3'},
-            {'name': 'dec1', 'filters': 16, 'kernel_size': 3,
-             'input': 'dec2', 'skip': None, 'prev': 'disp2'}
-        ]
-
-        for l_spec in decoder_spec:
-            with tf.variable_scope(l_spec['name']):
-                layers[l_spec['name']] = decoder_layer(
-                    inputs=layers[l_spec['input']],
-                    filters=l_spec['filters'],
-                    kernel_size=l_spec['kernel_size'],
-                    activation=tf.nn.elu,
-                    skip=layers[l_spec['skip']
-                                ] if l_spec['skip'] is not None else None,
-                    prev=layers[l_spec['prev']] if l_spec['prev'] is not None else None)
-
-                if l_spec['name'] in ['dec1', 'dec2', 'dec3', 'dec4']:
-                    l_name = l_spec['name'].replace('dec', 'disp')
-                    layers[l_name] = get_disp(layers[l_spec['name']])
-
-        return layers
 
 
 def monodepth_model_fn(features, labels, mode, params):
