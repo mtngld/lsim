@@ -73,29 +73,31 @@ def _augment(img, brightness, contrast, saturation, hue):
     img = tf.clip_by_value(img, 0.0, 1.0)
     return img
 
+
 def augment_image_pair(left_image, right_image):
     # randomly shift gamma
     random_gamma = tf.random_uniform([], 0.8, 1.2)
-    left_image_aug  = left_image  ** random_gamma
+    left_image_aug = left_image ** random_gamma
     right_image_aug = right_image ** random_gamma
 
     # randomly shift brightness
     random_brightness = tf.random_uniform([], 0.5, 2.0)
-    left_image_aug  =  left_image_aug * random_brightness
+    left_image_aug = left_image_aug * random_brightness
     right_image_aug = right_image_aug * random_brightness
 
     # randomly shift color
     random_colors = tf.random_uniform([3], 0.8, 1.2)
     white = tf.ones([tf.shape(left_image)[0], tf.shape(left_image)[1]])
     color_image = tf.stack([white * random_colors[i] for i in range(3)], axis=2)
-    left_image_aug  *= color_image
+    left_image_aug *= color_image
     right_image_aug *= color_image
 
     # saturate
-    left_image_aug  = tf.clip_by_value(left_image_aug,  0, 1)
+    left_image_aug = tf.clip_by_value(left_image_aug,  0, 1)
     right_image_aug = tf.clip_by_value(right_image_aug, 0, 1)
 
     return left_image_aug, right_image_aug
+
 
 def _parse_function(line, base_path, dataset, mode):
     path_left, path_right = tf.decode_csv(
@@ -109,11 +111,11 @@ def _parse_function(line, base_path, dataset, mode):
 
     if mode == tf.estimator.ModeKeys.TRAIN:
         do_flip = tf.random_uniform([], 0, 1)
-        img_left  = tf.cond(do_flip > 0.5, lambda: tf.image.flip_left_right(img_right_temp), lambda: img_left_temp)
+        img_left = tf.cond(do_flip > 0.5, lambda: tf.image.flip_left_right(img_right_temp), lambda: img_left_temp)
         img_right = tf.cond(do_flip > 0.5, lambda: tf.image.flip_left_right(img_left_temp),  lambda: img_right_temp)
 
         # randomly augment images
-        do_augment  = tf.random_uniform([], 0, 1)
+        do_augment = tf.random_uniform([], 0, 1)
         img_left, img_right = tf.cond(do_augment > 0.5, lambda: augment_image_pair(img_left, img_right), lambda: (img_left, img_right))
 
     else:
