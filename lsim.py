@@ -125,19 +125,11 @@ def _parse_function(line, base_path, dataset, mode):
     return {'left': img_left, 'right': img_right}
 
 
-def get_random_augmentaion_factors():
-    brightness = tf.random_uniform([], -16. / 255., 16. / 255.)
-    contrast = tf.random_uniform([], 0.8, 1.2)
-    saturation = tf.random_uniform([], 0.8, 1.2)
-    hue = tf.random_uniform([], -0.1, 0.1)
-    return brightness, contrast, saturation, hue
-
-
 def train_input_fn(filename, base_path, dataset):
     dataset = tf.data.TextLineDataset(filename) \
         .shuffle(buffer_size=30000) \
         .map(lambda line:
-            _parse_function(
+             _parse_function(
                 line, base_path=base_path,
                 dataset=dataset, mode=tf.estimator.ModeKeys.TRAIN)) \
         .apply(tf.contrib.data.batch_and_drop_remainder(BATCH_SIZE)) \
@@ -148,10 +140,11 @@ def train_input_fn(filename, base_path, dataset):
     next_element = iterator.get_next()
     return next_element, None
 
+
 def test_input_fn(filename, base_path, dataset):
     dataset = tf.data.TextLineDataset(filename) \
         .map(lambda line:
-            _parse_function(
+             _parse_function(
                 line, base_path=base_path,
                 dataset=dataset, mode=tf.estimator.ModeKeys.PREDICT)) \
         .batch(1)
@@ -360,142 +353,6 @@ def build_net(inputs):
 
         return layers
 
-
-def my_model_fn(features, labels, mode, params):
-    """Model function for CNN."""
-
-
-    with tf.variable_scope('net') as scope:
-        left_layers = build_net(features['left'])
-        scope.reuse_variables()
-        right_layers = build_net(tf.reverse(features['right'], [2]))
-
-    predictions = {
-        # Generate predictions (for PREDICT and EVAL mode)
-        'left_disp_est': left_layers['disp1'],
-        'right_disp_est': right_layers['disp1'],
-    }
-
-    if mode == tf.estimator.ModeKeys.PREDICT:
-        return tf.estimator.EstimatorSpec(
-            mode=mode, predictions=predictions)
-
-    # Add evaluation metrics (for EVAL mode)
-    # eval_metric_ops = {
-    #     "accuracy": tf.metrics.accuracy(
-    #         labels=labels, predictions=predictions["classes"])}
-    # return tf.estimator.EstimatorSpec(
-    #     mode=mode, loss=loss, eval_metric_ops=eval_metric_ops)
-
-    with tf.variable_scope('pyramids'):
-        left_pyramid = scale_pyramid(features['left'], 4)
-        right_pyramid = scale_pyramid(features['right'], 4)
-
-    with tf.variable_scope('disparities'):
-        disp_left_est = [left_layers['disp1'],
-                         left_layers['disp2'],
-                         left_layers['disp3'],
-                         left_layers['disp4']]
-        disp_right_est = [tf.reverse(right_layers['disp1'], [2]),
-                          tf.reverse(right_layers['disp2'], [2]),
-                          tf.reverse(right_layers['disp3'], [2]),
-                          tf.reverse(right_layers['disp4'], [2])]
-
-
-    # If we are here it means this is TRAIN mode
-    # GENERATE IMAGES
-    with tf.variable_scope('images'):
-        left_est = [generate_image_left(
-            right_pyramid[i], disp_left_est[i]) for i in range(4)]
-        right_est = [generate_image_right(
-            left_pyramid[i], disp_right_est[i]) for i in range(4)]
-
-    # LR CONSISTENCY
-    with tf.variable_scope('left-right'):
-        right_to_left_disp = [generate_image_left(
-            disp_right_est[i], disp_left_est[i]) for i in range(4)]
-        left_to_right_disp = [generate_image_right(
-            disp_left_est[i], disp_right_est[i]) for i in range(4)]
-
-    # DISPARITY SMOOTHNESS
-    with tf.variable_scope('smoothness'):
-        disp_left_smoothness = get_disparity_smoothness(
-            disp_left_est, left_pyramid)
-        disp_right_smoothness = get_disparity_smoothness(
-            disp_right_est, right_pyramid)
-
-    # Calculate Loss (for both TRAIN and EVAL modes)
-    with tf.variable_scope('losses'):
-
-        # IMAGE RECONSTRUCTION
-        # L1
-        l1_left = [tf.abs(left_est[i] - left_pyramid[i]) for i in range(4)]
-        l1_reconstruction_loss_left = [tf.reduce_mean(l) for l in l1_left]
-        l1_right = [tf.abs(right_est[i] - right_pyramid[i]) for i in range(4)]
-        l1_reconstruction_loss_right = [tf.reduce_mean(l) for l in l1_right]
-
-        # SSIM
-        ssim_left = [SSIM(left_est[i], left_pyramid[i]) for i in range(4)]
-        ssim_loss_left = [tf.reduce_mean(s) for s in ssim_left]
-        ssim_right = [SSIM(right_est[i], right_pyramid[i]) for i in range(4)]
-        ssim_loss_right = [tf.reduce_mean(s) for s in ssim_right]
-
-        # WEIGTHED SUM
-        image_loss_right = [params['alpha_image_loss'] * ssim_loss_right[i] +
-                            (1 - params['alpha_image_loss']) * l1_reconstruction_loss_right[i] for i in range(4)]
-        image_loss_left = [params['alpha_image_loss'] * ssim_loss_left[i] +
-                           (1 - params['alpha_image_loss']) * l1_reconstruction_loss_left[i] for i in range(4)]
-        image_loss = tf.add_n(image_loss_left + image_loss_right)
-
-        # DISPARITY SMOOTHNESS
-        disp_left_loss = [tf.reduce_mean(
-            tf.abs(disp_left_smoothness[i])) / 2 ** i for i in range(4)]
-        disp_right_loss = [tf.reduce_mean(
-            tf.abs(disp_right_smoothness[i])) / 2 ** i for i in range(4)]
-        disp_gradient_loss = tf.add_n(disp_left_loss + disp_right_loss)
-
-        # LR CONSISTENCY
-        lr_left_loss = [tf.reduce_mean(
-            tf.abs(right_to_left_disp[i] - disp_left_est[i])) for i in range(4)]
-        lr_right_loss = [tf.reduce_mean(
-            tf.abs(left_to_right_disp[i] - disp_right_est[i])) for i in range(4)]
-        lr_loss = tf.add_n(lr_left_loss + lr_right_loss)
-
-        # TOTAL LOSS
-        loss = image_loss + params['disp_gradient_loss_weight'] * \
-            disp_gradient_loss + params['lr_loss_weight'] * lr_loss
-
-        #loss = tf.losses.sparse_softmax_cross_entropy(labels=labels, logits=logits)
-    full_summary = True
-
-    for i in range(4):
-        tf.summary.scalar('ssim_loss_' + str(i), ssim_loss_left[i] + ssim_loss_right[i])
-        tf.summary.scalar('l1_loss_' + str(i), l1_reconstruction_loss_left[i] + l1_reconstruction_loss_right[i])
-        tf.summary.scalar('image_loss_' + str(i), image_loss_left[i] + image_loss_right[i])
-        tf.summary.scalar('disp_gradient_loss_' + str(i), disp_left_loss[i] + disp_right_loss[i])
-        tf.summary.scalar('lr_loss_' + str(i), lr_left_loss[i] + lr_right_loss[i])
-        tf.summary.image('disp_left_est_' + str(i), disp_left_est[i], max_outputs=4)
-        tf.summary.image('disp_right_est_' + str(i), disp_right_est[i], max_outputs=4)
-
-        if full_summary:
-            tf.summary.image('left_est_' + str(i), left_est[i], max_outputs=4)
-            tf.summary.image('right_est_' + str(i), right_est[i], max_outputs=4)
-            tf.summary.image('ssim_left_' + str(i), ssim_left[i],  max_outputs=4)
-            tf.summary.image('ssim_right_' + str(i), ssim_right[i], max_outputs=4)
-            tf.summary.image('l1_left_' + str(i), l1_left[i],  max_outputs=4)
-            tf.summary.image('l1_right_' + str(i), l1_right[i], max_outputs=4)
-
-    if full_summary:
-        tf.summary.image('left', features['left'], max_outputs=4)
-        tf.summary.image('right', features['right'], max_outputs=4)
-
-    # Configure the Training Op (for TRAIN mode)
-    if mode == tf.estimator.ModeKeys.TRAIN:
-        optimizer = tf.train.AdamOptimizer(learning_rate=params['learning_rate'])
-        train_op = optimizer.minimize(
-            loss=loss,
-            global_step=tf.train.get_global_step())
-        return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
 def monodepth_model_fn(features, labels, mode, params):
     """Model function for CNN."""
