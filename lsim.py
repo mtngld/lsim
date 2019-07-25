@@ -1,7 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from monodepth.utils.evaluate_kitti import evaluate_kitti
-from monodepth.monodepth_model_siamese import MonodepthModel, monodepth_parameters
+from lsim_model import LsimModel, monodepth_parameters
 import os
 
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -162,7 +162,7 @@ def test_input_fn(filename, base_path, dataset):
 
 def monodepth_model_fn(features, labels, mode, params):
     """Model function for CNN."""
-    mono_params = monodepth_parameters(
+    _params = monodepth_parameters(
         encoder='vgg',
         height=256,
         width=512,
@@ -178,12 +178,12 @@ def monodepth_model_fn(features, labels, mode, params):
         full_summary=True)
 
     if mode == tf.estimator.ModeKeys.TRAIN:
-        monodepth_mode = 'train'
+        _mode = 'train'
     else:
-        monodepth_mode = 'test'
+        _mode = 'test'
 
-    model = MonodepthModel(mono_params, monodepth_mode,
-                           features['left'], features['right'])
+    model = LsimModel(_params, _mode,
+                      features['left'], features['right'])
 
     start_learning_rate = params['learning_rate']
     total_steps = params['total_steps']
@@ -209,7 +209,7 @@ def monodepth_model_fn(features, labels, mode, params):
             'right_disp_est': model.disp_right_est[0]
             }
         return tf.estimator.EstimatorSpec(
-            mode=monodepth_mode, predictions=predictions)
+            mode=_mode, predictions=predictions)
 
 
 def main():
