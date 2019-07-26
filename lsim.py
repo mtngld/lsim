@@ -252,26 +252,6 @@ def main():
             config['base_path'],
             config['dataset']))
 
-        disparities_left = []
-        for item in est.predict(input_fn=lambda: test_input_fn(
-                config['test_filename'],
-                config['base_path'],
-                config['dataset'])):
-            disparities_left.append(item['left_disp_est'].squeeze())
-
-        disparities_left = np.stack(disparities_left)
-        print(disparities_left.shape)
-        np.save('./disparities_left.npy', disparities_left)
-
-        str_result = evaluate_kitti(
-            split='eigen',
-            predicted_disp_path='./disparities_left.npy',
-            gt_path=config['base_path'],
-            garg_crop=True)
-
-        eval_log_file.write('\n############\n\nEpoch: {}'.format(epoch))
-        eval_log_file.write(str_result)
-        print(str_result)
 
 if __name__ == '__main__':
     main()
