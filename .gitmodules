@@ -1,0 +1,3 @@
+[submodule "monodepth"]
+	path = monodepth
+	url = https://github.com/mtngld/monodepth/
