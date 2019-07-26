@@ -266,7 +266,7 @@ def main():
         str_result = evaluate_kitti(
             split='eigen',
             predicted_disp_path='./disparities_left.npy',
-            gt_path=os.path.expanduser('~/data/'),
+            gt_path=config['base_path'],
             garg_crop=True)
 
         eval_log_file.write('\n############\n\nEpoch: {}'.format(epoch))

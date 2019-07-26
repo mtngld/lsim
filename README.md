@@ -18,6 +18,13 @@
 * Pandas
 * Numpy
 
+You will also need our version of monodepth (minor changes to support Python 3), make sure to clone using
+
+```
+git clone --recursive https://github.com/mtngld/lsim.git
+```
+
+
 
 ### Data
 Use `monodepth` excellent downloader in order to get the data for kitti.
