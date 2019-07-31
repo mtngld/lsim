@@ -94,36 +94,14 @@ class LsimModel(object):
         return bilinear_sampler_1d_h(img, disp)
 
     def SSIM(self, x, y):
-        C1 = 0.01 ** 2
-        C2 = 0.03 ** 2
+        ssim = tf.image.ssim(x, y, max_val=1.0)
+        return tf.clip_by_value((1 - ssim) / 2, 0, 1)
 
-        mu_x = slim.avg_pool2d(x, 3, 1, 'VALID')
-        mu_y = slim.avg_pool2d(y, 3, 1, 'VALID')
-
-        sigma_x  = slim.avg_pool2d(x ** 2, 3, 1, 'VALID') - mu_x ** 2
-        sigma_y  = slim.avg_pool2d(y ** 2, 3, 1, 'VALID') - mu_y ** 2
-        sigma_xy = slim.avg_pool2d(x * y , 3, 1, 'VALID') - mu_x * mu_y
-
-        SSIM_n = (2 * mu_x * mu_y + C1) * (2 * sigma_xy + C2)
-        SSIM_d = (mu_x ** 2 + mu_y ** 2 + C1) * (sigma_x + sigma_y + C2)
-
-        SSIM = SSIM_n / SSIM_d
-
-        return tf.clip_by_value((1 - SSIM) / 2, 0, 1)
-
-    def get_disparity_smoothness(self, disp, pyramid):
+    def get_total_var(self, disp, pyramid):
         disp_gradients_x = [self.gradient_x(d) for d in disp]
         disp_gradients_y = [self.gradient_y(d) for d in disp]
-
-        image_gradients_x = [self.gradient_x(img) for img in pyramid]
-        image_gradients_y = [self.gradient_y(img) for img in pyramid]
-
-        weights_x = [tf.exp(-tf.reduce_mean(tf.abs(g), 3, keep_dims=True)) for g in image_gradients_x]
-        weights_y = [tf.exp(-tf.reduce_mean(tf.abs(g), 3, keep_dims=True)) for g in image_gradients_y]
-
-        smoothness_x = [disp_gradients_x[i] * weights_x[i] for i in range(4)]
-        smoothness_y = [disp_gradients_y[i] * weights_y[i] for i in range(4)]
-        return smoothness_x + smoothness_y
+        total_var = disp_gradients_x + disp_gradients_y
+        return total_var
 
     def get_disp(self, x):
         disp = 0.3 * self.conv(x, 1, 3, 1, tf.nn.sigmoid)
@@ -348,7 +326,6 @@ class LsimModel(object):
         # STORE DISPARITIES
         with tf.variable_scope('disparities'):
             self.disp_est  = [self.disp1, self.disp2, self.disp3, self.disp4]
-            print(self.disp_est)
             self.disp_left_est  = [d['left'] for d in self.disp_est]
             self.disp_right_est = [d['right'] for d in self.disp_est]
 
@@ -367,8 +344,8 @@ class LsimModel(object):
 
         # DISPARITY SMOOTHNESS
         with tf.variable_scope('smoothness'):
-            self.disp_left_smoothness  = self.get_disparity_smoothness(self.disp_left_est,  self.left_pyramid)
-            self.disp_right_smoothness = self.get_disparity_smoothness(self.disp_right_est, self.right_pyramid)
+            self.disp_left_total_var  = self.get_total_var(self.disp_left_est,  self.left_pyramid)
+            self.disp_right_total_var = self.get_total_var(self.disp_right_est, self.right_pyramid)
 
     def build_losses(self):
         with tf.variable_scope('losses', reuse=self.reuse_variables):
@@ -391,8 +368,8 @@ class LsimModel(object):
             self.image_loss = tf.add_n(self.image_loss_left + self.image_loss_right)
 
             # DISPARITY SMOOTHNESS
-            self.disp_left_loss  = [tf.reduce_mean(tf.abs(self.disp_left_smoothness[i]))  / 2 ** i for i in range(4)]
-            self.disp_right_loss = [tf.reduce_mean(tf.abs(self.disp_right_smoothness[i])) / 2 ** i for i in range(4)]
+            self.disp_left_loss  = [tf.reduce_mean(tf.abs(self.disp_left_total_var[i]))  / 2 ** i for i in range(4)]
+            self.disp_right_loss = [tf.reduce_mean(tf.abs(self.disp_right_total_var[i])) / 2 ** i for i in range(4)]
             self.disp_gradient_loss = tf.add_n(self.disp_left_loss + self.disp_right_loss)
 
             # LR CONSISTENCY
@@ -419,8 +396,8 @@ class LsimModel(object):
             if self.params.full_summary:
                 tf.summary.image('left_est_' + str(i), self.left_est[i], max_outputs=4)
                 tf.summary.image('right_est_' + str(i), self.right_est[i], max_outputs=4)
-                tf.summary.image('ssim_left_'  + str(i), self.ssim_left[i],  max_outputs=4)
-                tf.summary.image('ssim_right_' + str(i), self.ssim_right[i], max_outputs=4)
+                # tf.summary.image('ssim_left_'  + str(i), self.ssim_left[i],  max_outputs=4)
+                # tf.summary.image('ssim_right_' + str(i), self.ssim_right[i], max_outputs=4)
                 tf.summary.image('l1_left_'  + str(i), self.l1_left[i],  max_outputs=4)
                 tf.summary.image('l1_right_' + str(i), self.l1_right[i], max_outputs=4)
 
