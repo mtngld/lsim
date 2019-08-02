@@ -7,10 +7,19 @@
 # For any other use of the software not covered by the UCLB ACP-A Licence,
 # please contact info@uclb.com
 
-"""Fully convolutional model for monocular depth estimation
-    by Clement Godard, Oisin Mac Aodha and Gabriel J. Brostow
-    http://visual.cs.ucl.ac.uk/pubs/monoDepth/
-"""
+# This file is adopted from:
+
+#   Fully convolutional model for monocular depth estimation
+#    by Clement Godard, Oisin Mac Aodha and Gabriel J. Brostow
+#    http://visual.cs.ucl.ac.uk/pubs/monoDepth/
+
+
+# Major changes have been made to the code in order to allow a siamese version
+# We leave the above copy right notice as specified in the UCLB ACP-A Licence.
+
+# Original file for reference and comparison:
+# https://github.com/mrharicot/monodepth/blob/master/monodepth_model.py
+
 
 from __future__ import absolute_import, division, print_function
 from collections import namedtuple
